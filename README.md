@@ -1,4 +1,4 @@
-[![KiRoM]((http://img.youtube.com/vi/VpCH3-6NSFA/0.jpg)]](https://www.youtube.com/watch?v=VpCH3-6NSFA)
+[![KiRoM](http://img.youtube.com/vi/VpCH3-6NSFA/0.jpg)](https://www.youtube.com/watch?v=VpCH3-6NSFA)
 
 # KiRoM: Kinova Gen3 & Robotiq 2F-85 + MoveIt 2 + Isaac Sim  
 ---  
