@@ -1,5 +1,3 @@
-[![KiRoM](http://img.youtube.com/vi/VpCH3-6NSFA/0.jpg)](https://www.youtube.com/watch?v=VpCH3-6NSFA)
-
 # KiRoM: Kinova Gen3 & Robotiq 2F-85 + MoveIt 2 + Isaac Sim  
 ---  
 ## README (English) 
@@ -127,3 +125,7 @@ The collision object is added to the planning scene, and MoveIt 2 will handle th
 - Isaac Sim should run with `--network host` so that the ROS 2 nodes can communicate properly.
 - Make sure the ROS 2 bridge is enabled in Isaac Sim.
 - For issues or additional help, check the official Isaac Sim documentation or file an Issue in this repository.
+
+# Demo video
+
+[![KiRoM](http://img.youtube.com/vi/VpCH3-6NSFA/0.jpg)](https://www.youtube.com/watch?v=VpCH3-6NSFA)
