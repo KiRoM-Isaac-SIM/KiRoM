@@ -134,7 +134,7 @@ The collision object is added to the planning scene, and MoveIt 2 will handle th
 Robot USD File for Isaac Sim
 The Google Drive link below provides a USD (Universal Scene Description) file of a robot model designed for use in NVIDIA Isaac Sim.
 
-🔗 [![Download the USD File](https://drive.google.com/file/d/1mE75jU1tfwVVDbp-9vRVKO_EceGuSc2O/view?usp=drive_link)
+[Download Robot USD File for Isaac Sim](https://drive.google.com/file/d/1mE75jU1tfwVVDbp-9vRVKO_EceGuSc2O/view?usp=drive_link)
 
 # About the USD File
 This USD file contains the Kinova Gen3 (6-DoF) manipulator with a Robotiq 2F-85 gripper.
