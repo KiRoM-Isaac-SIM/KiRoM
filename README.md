@@ -125,7 +125,30 @@ The collision object is added to the planning scene, and MoveIt 2 will handle th
 - Isaac Sim should run with `--network host` so that the ROS 2 nodes can communicate properly.
 - Make sure the ROS 2 bridge is enabled in Isaac Sim.
 - For issues or additional help, check the official Isaac Sim documentation or file an Issue in this repository.
+- 
 
 # Demo video
 
 [![KiRoM](http://img.youtube.com/vi/VpCH3-6NSFA/0.jpg)](https://www.youtube.com/watch?v=VpCH3-6NSFA)
+
+Robot USD File for Isaac Sim
+The Google Drive link below provides a USD (Universal Scene Description) file of a robot model designed for use in NVIDIA Isaac Sim.
+
+🔗 [![Download the USD File](https://drive.google.com/file/d/1mE75jU1tfwVVDbp-9vRVKO_EceGuSc2O/view?usp=drive_link)
+
+# About the USD File
+This USD file contains the Kinova Gen3 (6-DoF) manipulator with a Robotiq 2F-85 gripper.
+It is designed to be used in Isaac Sim for robotics simulation and motion planning.
+The file includes:
+Complete robot model with articulated joints.
+Physics properties suitable for Isaac Sim.
+Visual and collision meshes for realistic interaction.
+
+# How to Use in Isaac Sim
+Open Isaac Sim and navigate to File > Open.
+Select the USD file from the file explorer and load it into the scene.
+Ensure that the robot is properly positioned and its physics settings are correct.
+If necessary, add the robot to an Isaac Sim ROS2 pipeline to control it via MoveIt 2.
+
+# Access Request
+If you need access to this file, please send a request email to hyeonsu.sejong@gmail.com explaining your purpose for using the file.
