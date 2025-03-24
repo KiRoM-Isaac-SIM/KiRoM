@@ -38,7 +38,7 @@ COPY ./joint_state_filter /root/moveit2_ws/src/joint_state_filter
 
 RUN apt install ros-$ROS_DISTRO-action-msgs
 
-COPY ./ompl_planning.yaml \
+COPY .resources/ompl_planning.yaml \
     /root/moveit2_ws/src/ros2_kortex/kortex_moveit_config/kinova_gen3_6dof_robotiq_2f_85_moveit_config/config/ompl_planning.yaml
 
 # Clone MoveIt 2 tutorials
@@ -53,8 +53,8 @@ RUN cd /root/moveit2_ws/src && \
 
 # Copy more custom files
 COPY ./kirom_picknplace /root/moveit2_ws/src/kirom_picknplace
-COPY ./connect.cpp  /root/moveit2_ws/src/moveit_task_constructor/core/src/stages/connect.cpp
-COPY ./gen3.srdf    /root/moveit2_ws/src/ros2_kortex/kortex_moveit_config/kinova_gen3_6dof_robotiq_2f_85_moveit_config/config/gen3.srdf
+COPY .resources/connect.cpp  /root/moveit2_ws/src/moveit_task_constructor/core/src/stages/connect.cpp
+COPY .resources/gen3.srdf    /root/moveit2_ws/src/ros2_kortex/kortex_moveit_config/kinova_gen3_6dof_robotiq_2f_85_moveit_config/config/gen3.srdf
 
 RUN apt install ros-humble-realtime-tools
 
@@ -62,7 +62,7 @@ RUN apt install ros-humble-realtime-tools
 RUN /bin/bash -c "source /opt/ros/$ROS_DISTRO/setup.bash; \
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release && \
     . install/setup.bash"
-COPY ./mtc.rviz /root/moveit2_ws/install/kinova_gen3_6dof_robotiq_2f_85_moveit_config/share/kinova_gen3_6dof_robotiq_2f_85_moveit_config/config/moveit.rviz
+COPY .resources/mtc.rviz /root/moveit2_ws/install/kinova_gen3_6dof_robotiq_2f_85_moveit_config/share/kinova_gen3_6dof_robotiq_2f_85_moveit_config/config/moveit.rviz
 
 RUN /bin/bash -c "source /root/moveit2_ws/install/setup.bash"
 
