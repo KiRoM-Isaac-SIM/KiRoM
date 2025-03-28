@@ -109,7 +109,26 @@ void KiRoMInterfaceNode::executeTask(mtc::Task &task)
 
   task.clear();
   RCLCPP_INFO(LOGGER, "Task cleared after execution");
+
+  // 만약 pick_and_place 모드라면, 플래닝 씬에서 물체 "object"를 제거합니다.
+  if (control_mode_ == "pick_and_place")
+  {
+    // 이미 pick이 완료되어, 객체가 end_effector_link에 attach된 상태라고 가정
+    moveit::planning_interface::PlanningSceneInterface psi;
+
+    moveit_msgs::msg::AttachedCollisionObject aco;
+    aco.link_name = "end_effector_link";  // 실제로 attach된 링크 이름
+    aco.object.id = "object";
+    aco.object.operation = moveit_msgs::msg::CollisionObject::REMOVE; // DETACH
+    psi.applyAttachedCollisionObject(aco);
+
+    // 만약 월드에도 동일 ID("object")가 남아있다면 removeCollisionObjects로 제거
+    psi.removeCollisionObjects({"object"});
+
+    RCLCPP_INFO(LOGGER, "Detached 'object' from the robot and removed from the world");
+  }
 }
+
 
 void KiRoMInterfaceNode::commandCallback(const std_msgs::msg::String::SharedPtr msg)
 {
@@ -238,22 +257,31 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
   auto sampling_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
   auto interpolation_planner = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
   auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
-  cartesian_planner->setMaxVelocityScalingFactor(1.0);
-  cartesian_planner->setMaxAccelerationScalingFactor(1.0);
-  cartesian_planner->setStepSize(.01);
+  cartesian_planner->setMaxVelocityScalingFactor(0.4);
+  cartesian_planner->setMaxAccelerationScalingFactor(0.3);
+  cartesian_planner->setStepSize(0.01);
 
-  // Open Hand (Pre-grasp)
+
   auto stage_open_hand = std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
   stage_open_hand->setGroup(hand_group_name);
   stage_open_hand->setGoal("open");
+  stage_open_hand->properties().set("path_tolerance", 0.05);
+  stage_open_hand->properties().set("goal_tolerance", 0.02);
   task.add(std::move(stage_open_hand));
 
-  // Move to Pick Position
   auto stage_move_to_pick = std::make_unique<mtc::stages::Connect>(
-      "move to pick", mtc::stages::Connect::GroupPlannerVector{{arm_group_name, sampling_planner}});
+      "move to pick",
+      mtc::stages::Connect::GroupPlannerVector{ { arm_group_name, sampling_planner } });
+
   stage_move_to_pick->setTimeout(5.0);
   stage_move_to_pick->properties().configureInitFrom(mtc::Stage::PARENT);
+
+  // ✅ tolerance 설정
+  stage_move_to_pick->properties().set("path_tolerance", 0.02);
+  stage_move_to_pick->properties().set("goal_tolerance", 0.02);
+
   task.add(std::move(stage_move_to_pick));
+
 
   // Pick Container (SerialContainer)
   auto grasp = std::make_unique<mtc::SerialContainer>("pick object");
@@ -297,15 +325,14 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
     grasp->properties().set("target_pose", p);
 
     auto wrapper = std::make_unique<mtc::stages::ComputeIK>("move to object", std::move(stage));
-    wrapper->setMaxIKSolutions(8);
-
+    wrapper->setMaxIKSolutions(16);
+    wrapper->setTimeout(0.2);  // 예: 기본 0.005초에서 0.01초로 늘림
     // 물체의 회전 정보 반영 (특히 Z축 회전 고려)
     Eigen::Quaterniond object_rotation(qw, qx, qy, qz);
 
     // Z축 회전만 추출 (yaw 값만 유지)
     Eigen::Vector3d euler = object_rotation.toRotationMatrix().eulerAngles(2, 1, 0);  // ZYX 순서
     double object_yaw = euler[0] * -1;  // Z축 회전 (Yaw)
-    std::cout << "Object Yaw: " << object_yaw << std::endl;
 
     if (width > length){
         wrapper->setIKFrame(
@@ -318,7 +345,7 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
     else
     {
     wrapper->setIKFrame(
-        Eigen::Translation3d(-0.00, 0, 0.1 + height/2) *
+        Eigen::Translation3d(-0.00, 0, 0.15 + height/2) *
         Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()) *
         Eigen::AngleAxisd(object_yaw, Eigen::Vector3d::UnitZ()),
         "end_effector_link");
@@ -342,10 +369,12 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
 
   // Close Hand (Grasp)
   {
-    auto stage = std::make_unique<mtc::stages::MoveTo>("close hand", interpolation_planner);
-    stage->setGroup(hand_group_name);
-    stage->setGoal("close");
-    grasp->insert(std::move(stage));
+    auto stage_close_hand = std::make_unique<mtc::stages::MoveTo>("close hand", interpolation_planner);
+    stage_close_hand->setGroup(hand_group_name);
+    stage_close_hand->setGoal("close");
+    stage_close_hand->properties().set("path_tolerance", 0.05);
+    stage_close_hand->properties().set("goal_tolerance", 0.02);
+    grasp->insert(std::move(stage_close_hand));
   }
 
   // Attach Object
