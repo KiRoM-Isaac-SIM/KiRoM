@@ -169,6 +169,8 @@ mtc::Task KiRoMInterfaceNode::createArmControllerTask(const std::string &command
   task.add(std::move(stage_state_current));
 
   auto sampling_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
+  sampling_planner->setMaxVelocityScalingFactor(0.4);
+  sampling_planner->setMaxAccelerationScalingFactor(0.3);
 
   auto stage_move_to_target_pose = std::make_unique<mtc::stages::MoveTo>("move to target pose", sampling_planner);
   stage_move_to_target_pose->setGroup(arm_group_name);
@@ -261,7 +263,9 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
   cartesian_planner->setMaxAccelerationScalingFactor(0.3);
   cartesian_planner->setStepSize(0.01);
 
-
+  // -------------------------
+  // PICK PHASE
+  // -------------------------
   auto stage_open_hand = std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
   stage_open_hand->setGroup(hand_group_name);
   stage_open_hand->setGoal("open");
@@ -271,19 +275,14 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
 
   auto stage_move_to_pick = std::make_unique<mtc::stages::Connect>(
       "move to pick",
-      mtc::stages::Connect::GroupPlannerVector{ { arm_group_name, sampling_planner } });
-
+      mtc::stages::Connect::GroupPlannerVector{{arm_group_name, sampling_planner}});
   stage_move_to_pick->setTimeout(5.0);
   stage_move_to_pick->properties().configureInitFrom(mtc::Stage::PARENT);
-
-  // ✅ tolerance 설정
   stage_move_to_pick->properties().set("path_tolerance", 0.02);
   stage_move_to_pick->properties().set("goal_tolerance", 0.02);
-
   task.add(std::move(stage_move_to_pick));
 
-
-  // Pick Container (SerialContainer)
+  // Pick container: includes approach, compute IK, grasp, attach, and retreat after grasp.
   auto grasp = std::make_unique<mtc::SerialContainer>("pick object");
   task.properties().exposeTo(grasp->properties(), {"eef", "group", "ik_frame"});
   grasp->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group", "ik_frame"});
@@ -295,70 +294,52 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
     stage->properties().set("link", hand_frame);
     stage->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
     stage->setMinMaxDistance(0.1, 0.15);
-
-    // Move towards object
     geometry_msgs::msg::Vector3Stamped vec;
     vec.header.frame_id = hand_frame;
     vec.vector.z = 1.0;
     stage->setDirection(vec);
     grasp->insert(std::move(stage));
   }
-  // Generate Pose + Compute IK
+  // Generate Pose and Compute IK to move to object for picking
   {
     auto stage = std::make_unique<mtc::stages::GeneratePose>("pose above object");
     geometry_msgs::msg::PoseStamped p;
     p.header.frame_id = frame_id;
+    p.pose.position.x = x;
+    p.pose.position.y = y;
+    p.pose.position.z = z;
     p.pose.orientation.x = 0.0;
     p.pose.orientation.y = 0.0;
     p.pose.orientation.z = 0.0;
     p.pose.orientation.w = 1.0;
-    p.pose.position.x = x;
-    p.pose.position.y = y;
-    p.pose.position.z = z;
     stage->setPose(p);
-
-    // 부모 속성 설정
     stage->properties().configureInitFrom(mtc::Stage::PARENT);
     stage->setMonitoredStage(current_state_ptr);
-
-    // 👇 ComputeIK 스테이지에서 사용할 target_pose 설정
     grasp->properties().set("target_pose", p);
-
     auto wrapper = std::make_unique<mtc::stages::ComputeIK>("move to object", std::move(stage));
     wrapper->setMaxIKSolutions(16);
-    wrapper->setTimeout(0.2);  // 예: 기본 0.005초에서 0.01초로 늘림
-    // 물체의 회전 정보 반영 (특히 Z축 회전 고려)
-    Eigen::Quaterniond object_rotation(qw, qx, qy, qz);
-
-    // Z축 회전만 추출 (yaw 값만 유지)
-    Eigen::Vector3d euler = object_rotation.toRotationMatrix().eulerAngles(2, 1, 0);  // ZYX 순서
-    double object_yaw = euler[0] * -1;  // Z축 회전 (Yaw)
-
-    if (width > length){
-        wrapper->setIKFrame(
-            Eigen::Translation3d(0.0, 0, 0.1 + height/2) *
-            Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()) *
-            Eigen::AngleAxisd(M_PI/2, Eigen::Vector3d::UnitZ()) *
-            Eigen::AngleAxisd(object_yaw, Eigen::Vector3d::UnitZ()),
-            "end_effector_link");
+    wrapper->setTimeout(0.2);
+    // Adjust the IK frame based on object orientation and dimensions if needed.
+    if (width > length)
+    {
+      wrapper->setIKFrame(
+          Eigen::Translation3d(0.0, 0, 0.1 + height / 2) *
+              Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()) *
+              Eigen::AngleAxisd(M_PI / 2, Eigen::Vector3d::UnitZ()),
+          hand_frame);
     }
     else
     {
-    wrapper->setIKFrame(
-        Eigen::Translation3d(-0.00, 0, 0.15 + height/2) *
-        Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()) *
-        Eigen::AngleAxisd(object_yaw, Eigen::Vector3d::UnitZ()),
-        "end_effector_link");
+      wrapper->setIKFrame(
+          Eigen::Translation3d(0.0, 0, 0.15 + height / 2) *
+              Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitY()),
+          hand_frame);
     }
-
-    // 👇 'target_pose'를 명시적으로 전달
     wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
     wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
-
     grasp->insert(std::move(wrapper));
   }
-
-  // Allow Collision
+  // Allow Collision between hand and object
   {
     auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>("allow collision (hand,object)");
     stage->allowCollisions("object",
@@ -366,7 +347,6 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
                            true);
     grasp->insert(std::move(stage));
   }
-
   // Close Hand (Grasp)
   {
     auto stage_close_hand = std::make_unique<mtc::stages::MoveTo>("close hand", interpolation_planner);
@@ -376,33 +356,109 @@ mtc::Task KiRoMInterfaceNode::createPickAndPlaceTask(const std::string &command)
     stage_close_hand->properties().set("goal_tolerance", 0.02);
     grasp->insert(std::move(stage_close_hand));
   }
-
   // Attach Object
   {
     auto stage = std::make_unique<mtc::stages::ModifyPlanningScene>("attach object");
     stage->attachObject("object", hand_frame);
     grasp->insert(std::move(stage));
   }
-
   // Retreat After Grasping
   {
     auto stage = std::make_unique<mtc::stages::MoveRelative>("retreat", cartesian_planner);
     stage->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
     stage->setMinMaxDistance(0.1, 0.15);
-
     geometry_msgs::msg::Vector3Stamped dir;
     dir.header.frame_id = hand_frame;
-    dir.vector.z = -1.0; // Move back
+    dir.vector.z = -1.0;
     stage->setDirection(dir);
     grasp->insert(std::move(stage));
   }
-
-  // Pick 과정 추가
+  // Add the pick container to the overall task.
   task.add(std::move(grasp));
+
+  // -------------------------
+  // PLACE PHASE
+  // -------------------------
+  // New container for placing the object
+  auto place = std::make_unique<mtc::SerialContainer>("place object");
+  task.properties().exposeTo(place->properties(), {"eef", "group", "ik_frame"});
+  place->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group", "ik_frame"});
+
+  // 1. Move to placement approach pose (above target)
+  {
+    auto stage = std::make_unique<mtc::stages::GeneratePose>("pose above placement");
+    geometry_msgs::msg::PoseStamped p;
+    p.header.frame_id = frame_id;
+    p.pose.position.x = target_x;
+    p.pose.position.y = target_y;
+    p.pose.position.z = target_z + 0.15; // Offset to approach from above
+    p.pose.orientation.x = target_qx;
+    p.pose.orientation.y = target_qy;
+    p.pose.orientation.z = target_qz;
+    p.pose.orientation.w = target_qw;
+    stage->setPose(p);
+    stage->properties().configureInitFrom(mtc::Stage::PARENT);
+    stage->setMonitoredStage(current_state_ptr);
+    place->properties().set("target_pose", p);
+    auto wrapper = std::make_unique<mtc::stages::ComputeIK>("move to placement approach", std::move(stage));
+    wrapper->setMaxIKSolutions(16);
+    wrapper->setTimeout(0.2);
+    wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
+    wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
+    place->insert(std::move(wrapper));
+  }
+  // // 2. Move to the exact placement pose
+  // {
+  //   auto stage = std::make_unique<mtc::stages::GeneratePose>("pose at placement");
+  //   geometry_msgs::msg::PoseStamped p;
+  //   p.header.frame_id = frame_id;
+  //   p.pose.position.x = target_x;
+  //   p.pose.position.y = target_y;
+  //   p.pose.position.z = target_z; // Final placement height
+  //   p.pose.orientation.x = target_qx;
+  //   p.pose.orientation.y = target_qy;
+  //   p.pose.orientation.z = target_qz;
+  //   p.pose.orientation.w = target_qw;
+  //   stage->setPose(p);
+  //   stage->properties().configureInitFrom(mtc::Stage::PARENT);
+  //   stage->setMonitoredStage(current_state_ptr);
+  //   place->properties().set("target_pose", p);
+  //   auto wrapper = std::make_unique<mtc::stages::ComputeIK>("move to placement", std::move(stage));
+  //   wrapper->setMaxIKSolutions(16);
+  //   wrapper->setTimeout(0.2);
+  //   wrapper->properties().configureInitFrom(mtc::Stage::PARENT, {"eef", "group"});
+  //   wrapper->properties().configureInitFrom(mtc::Stage::INTERFACE, {"target_pose"});
+  //   place->insert(std::move(wrapper));
+  // }
+  // // 3. Open hand to release the object
+  // {
+  //   auto stage_open_hand = std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
+  //   stage_open_hand->setGroup(hand_group_name);
+  //   stage_open_hand->setGoal("open");
+  //   stage_open_hand->properties().set("path_tolerance", 0.05);
+  //   stage_open_hand->properties().set("goal_tolerance", 0.02);
+  //   place->insert(std::move(stage_open_hand));
+  // }
+  // // 4. Detach the object from the robot
+  // {
+  //   auto stage_detach = std::make_unique<mtc::stages::ModifyPlanningScene>("detach object");
+  //   stage_detach->detachObject("object", hand_frame);
+  //   place->insert(std::move(stage_detach));
+  // }
+  // // 5. Retreat to home position
+  // {
+  //   auto stage_retreat = std::make_unique<mtc::stages::MoveTo>("retreat home", interpolation_planner);
+  //   stage_retreat->setGroup(arm_group_name);
+  //   stage_retreat->setGoal("home"); // Assumes a named target "home" is defined in your MoveIt configuration.
+  //   stage_retreat->properties().set("path_tolerance", 0.05);
+  //   stage_retreat->properties().set("goal_tolerance", 0.02);
+  //   place->insert(std::move(stage_retreat));
+  // }
+  // // Add the place container to the overall task.
+  task.add(std::move(place));
 
   return task;
 }
-
 
 int main(int argc, char **argv)
 {

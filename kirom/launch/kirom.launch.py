@@ -65,21 +65,21 @@ def launch_setup(context, *args, **kwargs):
             moveit_config.to_dict(),
             move_group_capabilities,
         ],
-        remappings=[
-            (
-                "joint_states",
-                "filtered_joint_states",
-            ),  # Remap joint_states to isaac_joint_states
-        ],
+        # remappings=[
+        #     (
+        #         "joint_states",
+        #         "filtered_joint_states",
+        #     ),  # Remap joint_states to isaac_joint_states
+        # ],
     )
 
     # Define the Joint State Filter Node
-    joint_state_filter_node = Node(
-        package="joint_state_filter",  # Replace with your package name
-        executable="joint_state_filter",
-        name="joint_state_filter",
-        output="screen",
-    )
+    # joint_state_filter_node = Node(
+    #     package="joint_state_filter",  # Replace with your package name
+    #     # executable="joint_state_filter",
+    #     name="joint_state_filter",
+    #     output="screen",
+    # )
 
     static_tf = Node(
         package="tf2_ros",
@@ -199,7 +199,7 @@ def launch_setup(context, *args, **kwargs):
         robot_state_publisher,
         move_group_node,
         ros2_control_node,
-        joint_state_filter_node,
+        # joint_state_filter_node,
         joint_state_broadcaster_spawner,
         robot_traj_controller_spawner,
         robot_pos_controller_spawner,
