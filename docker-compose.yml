@@ -1,0 +1,22 @@
+version: "3"
+services:
+  kirom:
+    image: kirom:metacom-conf
+    container_name: kirom
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - ROS_DOMAIN_ID=0
+      - ROS_LOCALHOST_ONLY=0
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+      - kirom:/moveit2_ws/src/kirom
+      - kirom_picknplace:/moveit2_ws/src/kirom_picknplace
+    stdin_open: true
+    tty: true
+    restart: "no"
+
+volumes:
+  kirom:
+  kirom_picknplace:
