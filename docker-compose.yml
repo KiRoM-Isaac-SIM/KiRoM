@@ -11,12 +11,8 @@ services:
       - ROS_LOCALHOST_ONLY=0
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
-      - kirom:/moveit2_ws/src/kirom
-      - kirom_picknplace:/moveit2_ws/src/kirom_picknplace
+      - ./kirom:/root/moveit2_ws/src/kirom
+      - ./kirom_picknplace:/root/moveit2_ws/src/kirom_picknplace
     stdin_open: true
     tty: true
     restart: "no"
-
-volumes:
-  kirom:
-  kirom_picknplace:
