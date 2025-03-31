@@ -46,7 +46,7 @@ rclcpp::node_interfaces::NodeBaseInterface::SharedPtr RobotArmControllerNode::ge
 }
 
 RobotArmControllerNode::RobotArmControllerNode(const rclcpp::NodeOptions &options)
-    : node_{std::make_shared<rclcpp::Node>("robot_arm_controller", options)}
+    : node_{std::make_shared<rclcpp::Node>("kirom_interface", options)}
 {
   node_->declare_parameter("control_mode", "pick_and_place");
   node_->get_parameter("control_mode", control_mode_);
@@ -137,13 +137,9 @@ mtc::Task RobotArmControllerNode::createArmControllerTask(const std::string &com
   task.setProperty("eef", hand_frame);
   task.setProperty("ik_frame", hand_group_name);
 
+  // Add current state stage
   auto stage_state_current = std::make_unique<mtc::stages::CurrentState>("current state");
   task.add(std::move(stage_state_current));
-
-  auto sampling_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
-
-  auto stage_move_to_target_pose = std::make_unique<mtc::stages::MoveTo>("move to target pose", sampling_planner);
-  stage_move_to_target_pose->setGroup(arm_group_name);
 
   // Parse the command to get target pose (x, y, z, roll, pitch, yaw)
   std::istringstream iss(command);
@@ -160,8 +156,48 @@ mtc::Task RobotArmControllerNode::createArmControllerTask(const std::string &com
   q.setRPY(roll, pitch, yaw);
   target_pose.pose.orientation = tf2::toMsg(q);
 
-  stage_move_to_target_pose->setGoal(target_pose);
-  task.add(std::move(stage_move_to_target_pose));
+  // Create Alternatives container
+  auto alternatives = std::make_unique<mtc::Alternatives>("choose best motion");
+
+  // 1. PipelinePlanner
+  {
+    auto pipeline_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
+    pipeline_planner->setMaxVelocityScalingFactor(0.4);
+    pipeline_planner->setMaxAccelerationScalingFactor(0.3);
+
+    auto stage = std::make_unique<mtc::stages::MoveTo>("PipelinePlanner path", pipeline_planner);
+    stage->setGroup(arm_group_name);
+    stage->setGoal(target_pose);
+    alternatives->add(std::move(stage));
+  }
+
+  // 2. JointInterpolationPlanner
+  {
+    auto joint_planner = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
+    joint_planner->setMaxVelocityScalingFactor(0.4);
+    joint_planner->setMaxAccelerationScalingFactor(0.3);
+
+    auto stage = std::make_unique<mtc::stages::MoveTo>("JointInterpolation path", joint_planner);
+    stage->setGroup(arm_group_name);
+    stage->setGoal(target_pose);
+    alternatives->add(std::move(stage));
+  }
+
+  // 3. CartesianPath
+  {
+    auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
+    cartesian_planner->setMaxVelocityScalingFactor(0.4);
+    cartesian_planner->setMaxAccelerationScalingFactor(0.3);
+    cartesian_planner->setStepSize(0.01); // fine-grained control
+
+    auto stage = std::make_unique<mtc::stages::MoveTo>("CartesianPath path", cartesian_planner);
+    stage->setGroup(arm_group_name);
+    stage->setGoal(target_pose);
+    alternatives->add(std::move(stage));
+  }
+
+  // Add the alternatives to the task
+  task.add(std::move(alternatives));
 
   return task;
 }
@@ -234,13 +270,16 @@ mtc::Task RobotArmControllerNode::createPickAndPlaceTask(const std::string &comm
   auto sampling_planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
   auto interpolation_planner = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
   auto cartesian_planner = std::make_shared<mtc::solvers::CartesianPath>();
-  cartesian_planner->setMaxVelocityScalingFactor(1.0);
-  cartesian_planner->setMaxAccelerationScalingFactor(1.0);
+  cartesian_planner->setMaxVelocityScalingFactor(0.4);
+  cartesian_planner->setMaxAccelerationScalingFactor(0.3);
   cartesian_planner->setStepSize(.01);
 
-  // Open hand
-  auto stage_open_hand =
-      std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
+  sampling_planner->setMaxVelocityScalingFactor(0.4);
+  sampling_planner->setMaxAccelerationScalingFactor(0.3);
+
+      // Open hand
+      auto stage_open_hand =
+          std::make_unique<mtc::stages::MoveTo>("open hand", interpolation_planner);
   stage_open_hand->setGroup(hand_group_name);
   stage_open_hand->setGoal("open");
   task.add(std::move(stage_open_hand));
@@ -361,14 +400,54 @@ mtc::Task RobotArmControllerNode::createPickAndPlaceTask(const std::string &comm
     task.add(std::move(grasp));
   }
 
-  // Connect from pick to place
   {
-    auto stage_move_to_place = std::make_unique<mtc::stages::Connect>(
-        "move to place",
-        mtc::stages::Connect::GroupPlannerVector{{arm_group_name, sampling_planner}});
-    stage_move_to_place->setTimeout(5.0);
-    stage_move_to_place->properties().configureInitFrom(mtc::Stage::PARENT);
-    task.add(std::move(stage_move_to_place));
+    auto connect_alternatives = std::make_unique<mtc::Alternatives>("connect to place (choose best)");
+
+    // --- 1. PipelinePlanner ---
+    {
+      auto planner = std::make_shared<mtc::solvers::PipelinePlanner>(node_);
+      planner->setMaxVelocityScalingFactor(0.4);
+      planner->setMaxAccelerationScalingFactor(0.3);
+
+      auto connect = std::make_unique<mtc::stages::Connect>(
+          "connect via PipelinePlanner",
+          mtc::stages::Connect::GroupPlannerVector{{arm_group_name, planner}});
+      connect->setTimeout(5.0);
+      connect->properties().configureInitFrom(mtc::Stage::PARENT);
+      connect_alternatives->add(std::move(connect));
+    }
+
+    // --- 2. JointInterpolationPlanner ---
+    {
+      auto planner = std::make_shared<mtc::solvers::JointInterpolationPlanner>();
+      planner->setMaxVelocityScalingFactor(0.4);
+      planner->setMaxAccelerationScalingFactor(0.3);
+      planner->setTimeout(5.0);
+
+      auto connect = std::make_unique<mtc::stages::Connect>(
+          "connect via JointInterpolationPlanner",
+          mtc::stages::Connect::GroupPlannerVector{{arm_group_name, planner}});
+      connect->setTimeout(5.0);
+      connect->properties().configureInitFrom(mtc::Stage::PARENT);
+      connect_alternatives->add(std::move(connect));
+    }
+
+    // --- 3. CartesianPath Planner ---
+    {
+      auto planner = std::make_shared<mtc::solvers::CartesianPath>();
+      planner->setMaxVelocityScalingFactor(0.4);
+      planner->setMaxAccelerationScalingFactor(0.3);
+      planner->setStepSize(0.01);
+
+      auto connect = std::make_unique<mtc::stages::Connect>(
+          "connect via CartesianPath",
+          mtc::stages::Connect::GroupPlannerVector{{arm_group_name, planner}});
+      connect->setTimeout(5.0);
+      connect->properties().configureInitFrom(mtc::Stage::PARENT);
+      connect_alternatives->add(std::move(connect));
+    }
+
+    task.add(std::move(connect_alternatives));
   }
 
   // PLACE Container
@@ -451,13 +530,13 @@ mtc::Task RobotArmControllerNode::createPickAndPlaceTask(const std::string &comm
     {
       auto stage = std::make_unique<mtc::stages::MoveRelative>("retreat", cartesian_planner);
       stage->properties().configureInitFrom(mtc::Stage::PARENT, {"group"});
-      stage->setMinMaxDistance(0.1, 0.3);
+      stage->setMinMaxDistance(0.05, 0.1);
       stage->setIKFrame(hand_frame);
       stage->properties().set("marker_ns", "retreat");
 
       geometry_msgs::msg::Vector3Stamped vec;
       vec.header.frame_id = "world";
-      vec.vector.z = 0.5; // Positive Z direction for upward movement
+      vec.vector.z = 0.1; // Positive Z direction for upward movement
       stage->setDirection(vec);
       place->insert(std::move(stage));
     }
